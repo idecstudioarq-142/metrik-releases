@@ -12,7 +12,7 @@ Si Windows muestra «Windows protegió su PC», elige **Más información** y de
 
 ## Cómo actualizar
 
-Descarga el instalador de la versión nueva y ejecútalo encima del que tienes: tus proyectos y tus bases de precios se conservan.
+Si ya tienes METRIK instalado, no necesitas hacer nada: al abrirlo busca la versión nueva, la descarga en segundo plano y la instala cuando cierras el programa. Tus proyectos y tus bases de precios se conservan.
 
 ## Soporte
 
