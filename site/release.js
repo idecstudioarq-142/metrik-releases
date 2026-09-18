@@ -13,7 +13,6 @@ export function fromGithubRelease(r) {
   const installer =
     assets.find((a) => /^METRIK-Setup-.*\.exe$/i.test(a.name)) ||
     assets.find((a) => /\.exe$/i.test(a.name));
-  const sha = String(r.body || '').match(/SHA-?256:?\s*([0-9a-f]{64})/i);
   return {
     tag,
     version,
@@ -24,9 +23,21 @@ export function fromGithubRelease(r) {
     installer: installer
       ? { name: installer.name, url: installer.browser_download_url, size: installer.size, sizeText: formatSize(installer.size) }
       : null,
-    sha256: sha ? sha[1].toLowerCase() : '',
+    sha256: sha256De(r.body, installer),
     notesHtml: notesToHtml(r.body || ''),
   };
+}
+
+/**
+ * SHA-256 del instalador: el que dicen las notas de la versión y, si no lo
+ * traen (desde la 1.5.157 las notas van en texto plano sin esa línea), el
+ * «digest» que GitHub calcula del propio archivo subido.
+ */
+export function sha256De(body, installer) {
+  const enNotas = String(body || '').match(/SHA-?256:?\s*([0-9a-f]{64})/i);
+  if (enNotas) return enNotas[1].toLowerCase();
+  const digest = String((installer && installer.digest) || '').match(/^sha256:([0-9a-f]{64})$/i);
+  return digest ? digest[1].toLowerCase() : '';
 }
 
 /** Fecha en español y en hora del Ecuador: «14 de septiembre de 2026». */
@@ -58,9 +69,23 @@ function inline(s) {
     .replace(/`([^`]+)`/g, '<code>$1</code>');
 }
 
+/** Línea que solo es una regla («=====» o «-----») del formato de texto plano. */
+function esRegla(line) {
+  return /^\s*[=\-_]{3,}\s*$/.test(line);
+}
+
+/** Título escrito todo en mayúsculas («PDF APAISADO»): sin minúsculas y con letras de verdad. */
+function esTituloEnMayusculas(line) {
+  const t = line.trim();
+  return t.length >= 4 && t.length <= 120 && !/\p{Ll}/u.test(t) && (t.match(/\p{Lu}/gu) || []).length >= 3;
+}
+
 /**
- * Convierte el cuerpo (Markdown sencillo) de una release en HTML seguro.
- * Quita el título «**METRIK x.y.z** — fecha» y el pie «Instalador … SHA-256: …»,
+ * Convierte el cuerpo de una release en HTML seguro. Entiende los dos formatos
+ * usados hasta hoy: el Markdown sencillo (viñetas con «**título.** texto») y el
+ * texto plano de la 1.5.157 en adelante (reglas de «====», títulos en
+ * mayúsculas subrayados con «----», viñetas con «·»).
+ * Quita la cabecera «METRIK x.y.z — fecha» y el pie «Instalador … SHA-256: …»,
  * que la página ya muestra por su cuenta. Todo el texto se escapa antes de
  * añadir las etiquetas propias, así que no entra HTML ajeno.
  */
@@ -68,24 +93,31 @@ export function notesToHtml(body) {
   const blocks = String(body).replace(/\r\n?/g, '\n').trim().split(/\n\s*\n/);
   const out = [];
   for (const block of blocks) {
-    const lines = block.split('\n').map((l) => l.trimEnd()).filter((l) => l.trim());
+    const lines = block.split('\n').map((l) => l.trimEnd()).filter((l) => l.trim() && !esRegla(l));
     if (!lines.length) continue;
     const text = lines.join(' ').trim();
-    if (/^\*\*METRIK\s+[\d.]+\*\*/i.test(text)) continue;
+    if (/^\*{0,2}METRIK\s+[\d.]+\*{0,2}/i.test(text)) continue;
     if (/^Instalador de METRIK/i.test(text) || /SHA-?256:/i.test(text)) continue;
+
+    // Formato de texto plano: la primera línea en mayúsculas es el título del bloque.
+    if (esTituloEnMayusculas(lines[0]) && !/^\s*[-*•·]\s+/.test(lines[0])) {
+      out.push(`<h4>${inline(lines.shift().trim())}</h4>`);
+      if (!lines.length) continue;
+    }
 
     const items = [];
     const paras = [];
     for (const line of lines) {
-      const m = line.match(/^\s*[-*•]\s+(.*)$/);
+      const m = line.match(/^\s*[-*•·]\s+(.*)$/);
       if (m) items.push(m[1]);
       else if (items.length && /^\s/.test(line)) items[items.length - 1] += ' ' + line.trim();
       else paras.push(line.trim());
     }
+    const resto = lines.join(' ').trim();
     if (items.length && !paras.length) {
       out.push('<ul>' + items.map((i) => `<li>${inline(i)}</li>`).join('') + '</ul>');
-    } else if (/^#{1,6}\s+/.test(text)) {
-      out.push(`<h4>${inline(text.replace(/^#{1,6}\s+/, ''))}</h4>`);
+    } else if (/^#{1,6}\s+/.test(resto)) {
+      out.push(`<h4>${inline(resto.replace(/^#{1,6}\s+/, ''))}</h4>`);
     } else {
       out.push(`<p>${inline([...paras, ...items].join(' '))}</p>`);
     }
